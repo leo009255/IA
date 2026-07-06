@@ -95,6 +95,26 @@ function addMessage(role, text = '') {
   return message;
 }
 
+function looksDegenerate(text) {
+  if (!text) return false;
+  const words = text.trim().split(/\s+/);
+  if (words.length < 6) return false;
+
+  // Muitas palavras repetidas seguidas (loop de repetição).
+  let repeats = 0;
+  for (let i = 1; i < words.length; i++) {
+    if (words[i] === words[i - 1]) repeats++;
+  }
+  if (repeats / words.length > 0.15) return true;
+
+  // Alta proporção de "palavras" muito curtas/soltas (números, letras isoladas, hífens),
+  // típico do colapso visto no print (ex: "1, 2 3 2 1 3 2 3 2 1 2 2 1 2").
+  const fragmentLike = words.filter((w) => /^[\d.,-]+$|^[A-Za-zÀ-ÿ]{1,2}$/.test(w)).length;
+  if (fragmentLike / words.length > 0.4) return true;
+
+  return false;
+}
+
 function setReady(ready) {
   elements.userInput.disabled = !ready;
   elements.sendBtn.disabled = !ready;
@@ -233,6 +253,11 @@ async function init() {
         elements.downloadProgress.value = Math.round(progress * 100);
         setStatus(report?.text || `Carregando modelo: ${Math.round(progress * 100)}%`);
       },
+    }, {
+      // Limita explicitamente a janela de contexto para evitar que o modelo
+      // "estoure" o contexto e comece a alucinar/repetir quando a conversa cresce.
+      context_window_size: 2048,
+      sliding_window_size: -1,
     });
 
     elements.downloadProgress.hidden = true;
@@ -274,7 +299,9 @@ async function sendMessage() {
   let assistantText = '';
 
   try {
-    const context = await DB.getRecentMessages(12);
+    // Um modelo de 1B degrada rápido com muito histórico; 6 mensagens (3 trocas)
+    // é mais seguro que 12 para manter a coerência.
+    const context = await DB.getRecentMessages(6);
     const systemPrompt = await buildSystemPrompt();
     await DB.saveMessage('user', text);
 
@@ -287,7 +314,9 @@ async function sendMessage() {
       stream: true,
       temperature: 0.5,
       top_p: 0.9,
-      max_tokens: 300,
+      max_tokens: 220,
+      repetition_penalty: 1.3,
+      frequency_penalty: 0.4,
     });
 
     for await (const chunk of chunks) {
@@ -297,9 +326,17 @@ async function sendMessage() {
       elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
     }
 
-    const finalText = assistantText.trim() || 'Não consegui formar uma resposta. Tente reformular a mensagem.';
-    assistantMessage.textContent = finalText;
-    await DB.saveMessage('assistant', finalText);
+    let finalText = assistantText.trim() || 'Não consegui formar uma resposta. Tente reformular a mensagem.';
+
+    if (looksDegenerate(finalText)) {
+      // Não salva a resposta quebrada no histórico — se salvasse, ela viraria
+      // contexto para a próxima mensagem e o problema só pioraria.
+      finalText = 'Me perdi um pouco agora e a resposta saiu confusa. Pode repetir ou reformular a mensagem?';
+      assistantMessage.textContent = finalText;
+    } else {
+      assistantMessage.textContent = finalText;
+      await DB.saveMessage('assistant', finalText);
+    }
     setStatus('Online e funcionando localmente', 'ready');
   } catch (error) {
     const details = describeError(error);
