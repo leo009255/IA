@@ -1,26 +1,37 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>IA Local Privada</title>
-    <link rel="stylesheet" href="styles/style.css">
-    <link rel="manifest" href="manifest.webmanifest">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#111827">
+  <title>IA Local Privada</title>
+  <link rel="stylesheet" href="./styles/style.css">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png">
 </head>
 <body>
-    <div id="chat-container">
-        <div id="chat-history"></div>
+  <main id="chat-container">
+    <header class="app-header">
+      <div>
+        <h1>IA Local</h1>
+        <p>Conversa privada no aparelho</p>
+      </div>
+      <span id="status-dot" aria-hidden="true"></span>
+    </header>
 
-        <div id="status-bar">
-            <span id="ai-status">Verificando compatibilidade WebGPU...</span>
-            <progress id="download-progress" value="0" max="100" style="display: none;"></progress>
-        </div>
+    <section id="chat-history" aria-live="polite"></section>
 
-        <div id="input-area">
-            <textarea id="user-input" placeholder="Digite sua mensagem..." disabled></textarea>
-            <button id="send-btn" disabled>Enviar</button>
-        </div>
-    </div>
-    <script src="app.js" type="module"></script>
+    <section id="status-bar">
+      <span id="ai-status">Preparando aplicação...</span>
+      <progress id="download-progress" value="0" max="100" hidden></progress>
+    </section>
+
+    <form id="input-area">
+      <textarea id="user-input" placeholder="Digite sua mensagem..." rows="1" disabled></textarea>
+      <button id="send-btn" type="submit" disabled>Enviar</button>
+    </form>
+  </main>
+
+  <script src="./app.js?v=4" type="module"></script>
 </body>
 </html>
