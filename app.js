@@ -1,180 +1,172 @@
 import { DB } from './scripts/database.js';
-
-const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.84';
-// Modelo menor e mais compatível para o primeiro teste no celular.
-const SELECTED_MODEL = 'SmolLM2-360M-Instruct-q4f32_1-MLC';
-const SYSTEM_PROMPT = 'Você é uma companhia privada para conversas cotidianas. Responda sempre em português brasileiro, de forma natural, informal, direta e bem-humorada. Priorize diálogo, escuta e continuidade. Não pesquise na internet, não crie códigos e não afirme possuir sentimentos ou consciência.';
+import { MLCEngine, CreateWebWorkerMLCEngine } from "https://esm.run/@mlc.ai/web-llm";
 
 const elements = {
-  chatHistory: document.getElementById('chat-history'),
-  aiStatus: document.getElementById('ai-status'),
-  statusDot: document.getElementById('status-dot'),
-  downloadProgress: document.getElementById('download-progress'),
-  inputArea: document.getElementById('input-area'),
-  userInput: document.getElementById('user-input'),
-  sendBtn: document.getElementById('send-btn'),
+    chatHistory: document.getElementById('chat-history'),
+    aiStatus: document.getElementById('ai-status'),
+    downloadProgress: document.getElementById('download-progress'),
+    userInput: document.getElementById('user-input'),
+    sendBtn: document.getElementById('send-btn')
 };
 
 let engine = null;
+let currentAssistantMessageDiv = null;
 let isGenerating = false;
 
-function describeError(error) {
-  if (error instanceof Error) {
-    const details = [error.name, error.message].filter(Boolean).join(': ');
-    return details || String(error);
-  }
-  if (typeof error === 'string') return error;
-  if (error === null) return 'Erro nulo recebido durante a inicialização.';
-  if (error === undefined) return 'Erro sem detalhes recebido durante a inicialização.';
-  try {
-    const json = JSON.stringify(error, Object.getOwnPropertyNames(error));
-    return json && json !== '{}' ? json : String(error);
-  } catch {
-    return String(error);
-  }
-}
+// Modelo maior e melhor para português (3B params, mais coerente)
+const SELECTED_MODEL = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 
-function setStatus(text, state = 'loading') {
-  elements.aiStatus.textContent = text;
-  elements.statusDot.dataset.state = state;
-}
-
-function addMessage(role, text = '') {
-  const message = document.createElement('div');
-  message.className = `message ${role}-message`;
-  message.textContent = text;
-  elements.chatHistory.appendChild(message);
-  elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
-  return message;
-}
-
-function setReady(ready) {
-  elements.userInput.disabled = !ready;
-  elements.sendBtn.disabled = !ready;
-  if (ready) elements.userInput.focus();
-}
-
-async function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  try {
-    await navigator.serviceWorker.register('./sw.js');
-  } catch (error) {
-    console.warn('Service Worker não registrado:', error);
-  }
-}
-
-async function verifyWebGPU() {
-  if (!window.isSecureContext) {
-    throw new Error('Esta página precisa ser aberta por HTTPS.');
-  }
-  if (!('gpu' in navigator)) {
-    throw new Error('WebGPU não está disponível neste navegador. Atualize o Chrome e confirme que não está usando navegador interno de outro aplicativo.');
-  }
-
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) {
-    throw new Error('O Chrome expôs a API WebGPU, mas não conseguiu criar um adaptador compatível neste aparelho. Isso normalmente indica limitação do driver, da GPU ou bloqueio do navegador.');
-  }
-}
+const SYSTEM_PROMPT = `Você é uma companheira de conversa chamada Luna. 
+Regras absolutas:
+- Responda SEMPRE em português brasileiro natural e fluido
+- Seja calorosa, empática e presente na conversa
+- Faça perguntas para manter o diálogo vivo
+- Use humor leve quando apropriado
+- NÃO repita frases estranhas ou sem sentido
+- NÃO fale de cerveja, oração ou coisas aleatórias sem contexto
+- Se não souber algo, seja honesta
+- Mantenha respostas curtas e diretas (2-4 frases)`;
 
 async function init() {
-  try {
-    setReady(false);
-    setStatus('Verificando WebGPU...');
-    await verifyWebGPU();
-
-    setStatus('Inicializando banco de dados...');
-    await DB.init();
-    await registerServiceWorker();
-
-    setStatus('Carregando biblioteca da IA...');
-    const webllm = await import(WEBLLM_URL);
-    if (typeof webllm.CreateMLCEngine !== 'function') {
-      throw new Error('A biblioteca WebLLM foi carregada, mas CreateMLCEngine não foi encontrado.');
+    if ('serviceWorker' in navigator) {
+        try {
+            await navigator.serviceWorker.register('./sw.js');
+        } catch (e) { console.log('SW:', e.message); }
     }
 
-    elements.downloadProgress.hidden = false;
-    setStatus('Preparando modelo local...');
+    try {
+        elements.aiStatus.textContent = 'Inicializando banco de dados...';
+        await DB.init();
+        await loadChatHistory();
 
-    // A versão direta evita uma segunda camada de Web Worker durante o diagnóstico.
-    engine = await webllm.CreateMLCEngine(SELECTED_MODEL, {
-      initProgressCallback(report) {
-        const progress = typeof report?.progress === 'number' ? report.progress : 0;
-        elements.downloadProgress.value = Math.round(progress * 100);
-        setStatus(report?.text || `Carregando modelo: ${Math.round(progress * 100)}%`);
-      },
-    });
+        elements.aiStatus.textContent = 'Iniciando IA (1º acesso pode demorar)...';
+        elements.downloadProgress.style.display = 'block';
 
-    elements.downloadProgress.hidden = true;
-    setStatus('Online e funcionando localmente', 'ready');
-    setReady(true);
-    addMessage('assistant', 'Pronto. O modelo está carregado no aparelho. A primeira inicialização demora mais porque os arquivos precisam ser baixados e armazenados no navegador.');
-  } catch (error) {
-    console.error('Falha na inicialização:', error);
-    const details = describeError(error);
-    elements.downloadProgress.hidden = true;
-    setStatus(`Erro: ${details}`, 'error');
-    addMessage('assistant', `Não consegui iniciar.\n\n${details}`);
-  }
+        await initEngine();
+    } catch (error) {
+        elements.aiStatus.textContent = 'Erro: ' + error.message;
+    }
+}
+
+async function initEngine() {
+    const initProgressCallback = (progress) => {
+        elements.aiStatus.textContent = progress.text || 'Carregando...';
+        if (progress.progress !== undefined) {
+            elements.downloadProgress.value = Math.round(progress.progress * 100);
+        }
+    };
+
+    // Tenta GPU primeiro
+    try {
+        const worker = new Worker(new URL('./scripts/ai-worker.js', import.meta.url), { type: 'module' });
+        engine = await CreateWebWorkerMLCEngine(worker, SELECTED_MODEL, { initProgressCallback });
+        elements.aiStatus.textContent = 'Online (GPU) — pronta para conversar';
+        enableChat();
+        return;
+    } catch (gpuError) {
+        console.warn('GPU falhou:', gpuError.message);
+        elements.aiStatus.textContent = 'GPU não disponível, tentando CPU...';
+    }
+
+    // Fallback CPU
+    try {
+        engine = await MLCEngine.create(SELECTED_MODEL, { initProgressCallback });
+        elements.aiStatus.textContent = 'Online (CPU) — pronta para conversar';
+        enableChat();
+    } catch (cpuError) {
+        elements.aiStatus.textContent = 'Erro: ' + cpuError.message;
+    }
+}
+
+function enableChat() {
+    elements.downloadProgress.style.display = 'none';
+    elements.userInput.disabled = false;
+    elements.sendBtn.disabled = false;
+    elements.userInput.focus();
+}
+
+async function loadChatHistory() {
+    try {
+        const messages = await DB.getRecentMessages(50);
+        elements.chatHistory.innerHTML = '';
+        for (const msg of messages) {
+            const div = document.createElement('div');
+            div.classList.add('message', msg.role === 'user' ? 'user-message' : 'assistant-message');
+            div.textContent = msg.content;
+            elements.chatHistory.appendChild(div);
+        }
+        elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
+    } catch (e) { console.error(e); }
 }
 
 async function sendMessage() {
-  const text = elements.userInput.value.trim();
-  if (!text || !engine || isGenerating) return;
+    const text = elements.userInput.value.trim();
+    if (!text || isGenerating || !engine) return;
 
-  isGenerating = true;
-  setReady(false);
-  elements.userInput.value = '';
-  addMessage('user', text);
+    isGenerating = true;
+    elements.userInput.value = '';
+    elements.sendBtn.disabled = true;
+    elements.userInput.disabled = true;
 
-  const assistantMessage = addMessage('assistant', '');
-  let assistantText = '';
+    const userDiv = document.createElement('div');
+    userDiv.classList.add('message', 'user-message');
+    userDiv.textContent = text;
+    elements.chatHistory.appendChild(userDiv);
+    elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
 
-  try {
-    const context = await DB.getRecentMessages(10);
     await DB.saveMessage('user', text);
 
-    const chunks = await engine.chat.completions.create({
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...context,
-        { role: 'user', content: text },
-      ],
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 384,
-    });
+    const context = await DB.getRecentMessages(10);
+    const contextForAI = context.slice(0, -1);
 
-    for await (const chunk of chunks) {
-      const piece = chunk.choices?.[0]?.delta?.content || '';
-      assistantText += piece;
-      assistantMessage.textContent = assistantText;
-      elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
+    currentAssistantMessageDiv = document.createElement('div');
+    currentAssistantMessageDiv.classList.add('message', 'assistant-message');
+    elements.chatHistory.appendChild(currentAssistantMessageDiv);
+
+    try {
+        const messages = [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...contextForAI,
+            { role: "user", content: text }
+        ];
+
+        const chunks = await engine.chat.completions.create({
+            messages,
+            stream: true,
+            temperature: 0.6,        // mais previsível, menos alucinação
+            max_tokens: 256,         // respostas mais curtas e focadas
+            top_p: 0.9               // mais coerente
+        });
+
+        let fullReply = "";
+        for await (const chunk of chunks) {
+            const textChunk = chunk.choices[0]?.delta?.content || "";
+            if (textChunk) {
+                fullReply += textChunk;
+                currentAssistantMessageDiv.textContent = fullReply;
+                elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
+            }
+        }
+
+        await DB.saveMessage('assistant', fullReply);
+
+    } catch (error) {
+        currentAssistantMessageDiv.textContent = 'Erro: ' + error.message;
+    } finally {
+        currentAssistantMessageDiv = null;
+        isGenerating = false;
+        elements.sendBtn.disabled = false;
+        elements.userInput.disabled = false;
+        elements.userInput.focus();
     }
-
-    await DB.saveMessage('assistant', assistantText);
-    setStatus('Online e funcionando localmente', 'ready');
-  } catch (error) {
-    const details = describeError(error);
-    console.error('Falha ao gerar resposta:', error);
-    assistantMessage.textContent = `Erro ao gerar resposta: ${details}`;
-    setStatus(`Erro: ${details}`, 'error');
-  } finally {
-    isGenerating = false;
-    setReady(true);
-  }
 }
 
-elements.inputArea.addEventListener('submit', (event) => {
-  event.preventDefault();
-  sendMessage();
-});
-
-elements.userInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    sendMessage();
-  }
+elements.sendBtn.addEventListener('click', sendMessage);
+elements.userInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
 });
 
 init();
