@@ -1,11 +1,11 @@
-const CACHE_NAME = 'ia-local-shell-v4';
+const CACHE_NAME = 'ia-local-shell-v5';
 const APP_SHELL = [
   './',
   './index.html',
-  './app.js',
+  './app.js?v=5',
   './manifest.webmanifest',
   './styles/style.css',
-  './scripts/database.js',
+  './scripts/database.js?v=5',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];

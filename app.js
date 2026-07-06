@@ -1,4 +1,4 @@
-import { DB } from './scripts/database.js';
+import { DB } from './scripts/database.js?v=5';
 
 const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.84';
 const SELECTED_MODEL = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
@@ -171,6 +171,16 @@ async function init() {
 
     setStatus('Inicializando memória local...');
     await DB.init();
+
+    if (
+      typeof DB.getProfile !== 'function' ||
+      typeof DB.getFacts !== 'function' ||
+      typeof DB.saveFact !== 'function'
+    ) {
+      throw new Error(
+        'O navegador carregou uma versão antiga de database.js. Atualize a página ou limpe os dados deste site.'
+      );
+    }
     const restoredMessages = await restoreVisibleHistory();
     await registerServiceWorker();
 
