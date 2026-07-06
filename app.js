@@ -1,8 +1,9 @@
 import { DB } from './scripts/database.js';
 
 const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.84';
-const SELECTED_MODEL = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
-const SYSTEM_PROMPT = 'Você é uma companhia privada para conversas cotidianas. Fale em português brasileiro de forma natural, informal, direta e humana. Priorize diálogo, humor, reflexões, escuta e continuidade da conversa. Não pesquise na internet, não crie códigos e não tente atuar como uma ferramenta profissional. Não afirme possuir sentimentos, consciência ou experiências reais.';
+// Modelo menor e mais compatível para o primeiro teste no celular.
+const SELECTED_MODEL = 'SmolLM2-360M-Instruct-q4f32_1-MLC';
+const SYSTEM_PROMPT = 'Você é uma companhia privada para conversas cotidianas. Responda sempre em português brasileiro, de forma natural, informal, direta e bem-humorada. Priorize diálogo, escuta e continuidade. Não pesquise na internet, não crie códigos e não afirme possuir sentimentos ou consciência.';
 
 const elements = {
   chatHistory: document.getElementById('chat-history'),
@@ -16,6 +17,22 @@ const elements = {
 
 let engine = null;
 let isGenerating = false;
+
+function describeError(error) {
+  if (error instanceof Error) {
+    const details = [error.name, error.message].filter(Boolean).join(': ');
+    return details || String(error);
+  }
+  if (typeof error === 'string') return error;
+  if (error === null) return 'Erro nulo recebido durante a inicialização.';
+  if (error === undefined) return 'Erro sem detalhes recebido durante a inicialização.';
+  try {
+    const json = JSON.stringify(error, Object.getOwnPropertyNames(error));
+    return json && json !== '{}' ? json : String(error);
+  } catch {
+    return String(error);
+  }
+}
 
 function setStatus(text, state = 'loading') {
   elements.aiStatus.textContent = text;
@@ -46,54 +63,58 @@ async function registerServiceWorker() {
   }
 }
 
+async function verifyWebGPU() {
+  if (!window.isSecureContext) {
+    throw new Error('Esta página precisa ser aberta por HTTPS.');
+  }
+  if (!('gpu' in navigator)) {
+    throw new Error('WebGPU não está disponível neste navegador. Atualize o Chrome e confirme que não está usando navegador interno de outro aplicativo.');
+  }
+
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) {
+    throw new Error('O Chrome reconheceu WebGPU, mas não encontrou uma GPU disponível para executar o modelo.');
+  }
+}
+
 async function init() {
   try {
     setReady(false);
-
-    if (location.protocol === 'file:' || location.protocol === 'content:') {
-      throw new Error('Abra este projeto por HTTPS ou localhost. Ele não funciona aberto diretamente pelo gerenciador de arquivos.');
-    }
-
-    if (!window.isSecureContext) {
-      throw new Error('Esta página precisa de uma conexão segura HTTPS ou localhost.');
-    }
-
-    if (!('gpu' in navigator)) {
-      throw new Error('WebGPU não está disponível neste navegador ou aparelho. Atualize o Chrome e confira chrome://gpu.');
-    }
+    setStatus('Verificando WebGPU...');
+    await verifyWebGPU();
 
     setStatus('Inicializando banco de dados...');
     await DB.init();
     await registerServiceWorker();
 
     setStatus('Carregando biblioteca da IA...');
-    const { CreateWebWorkerMLCEngine } = await import(WEBLLM_URL);
+    const webllm = await import(WEBLLM_URL);
+    if (typeof webllm.CreateMLCEngine !== 'function') {
+      throw new Error('A biblioteca WebLLM foi carregada, mas CreateMLCEngine não foi encontrado.');
+    }
 
     elements.downloadProgress.hidden = false;
-    setStatus('Preparando o modelo local...');
+    setStatus('Preparando modelo local...');
 
-    const worker = new Worker(
-      new URL('./scripts/ai-worker.js', import.meta.url),
-      { type: 'module' },
-    );
-
-    engine = await CreateWebWorkerMLCEngine(worker, SELECTED_MODEL, {
+    // A versão direta evita uma segunda camada de Web Worker durante o diagnóstico.
+    engine = await webllm.CreateMLCEngine(SELECTED_MODEL, {
       initProgressCallback(report) {
-        const progress = typeof report.progress === 'number' ? report.progress : 0;
+        const progress = typeof report?.progress === 'number' ? report.progress : 0;
         elements.downloadProgress.value = Math.round(progress * 100);
-        setStatus(report.text || `Carregando modelo: ${Math.round(progress * 100)}%`);
+        setStatus(report?.text || `Carregando modelo: ${Math.round(progress * 100)}%`);
       },
     });
 
     elements.downloadProgress.hidden = true;
     setStatus('Online e funcionando localmente', 'ready');
     setReady(true);
-    addMessage('assistant', 'Pronto. A primeira carga pode demorar porque o modelo precisa ser baixado e preparado no aparelho.');
+    addMessage('assistant', 'Pronto. O modelo está carregado no aparelho. A primeira inicialização demora mais porque os arquivos precisam ser baixados e armazenados no navegador.');
   } catch (error) {
-    console.error(error);
+    console.error('Falha na inicialização:', error);
+    const details = describeError(error);
     elements.downloadProgress.hidden = true;
-    setStatus(`Erro: ${error.message}`, 'error');
-    addMessage('assistant', `Não consegui iniciar: ${error.message}`);
+    setStatus(`Erro: ${details}`, 'error');
+    addMessage('assistant', `Não consegui iniciar.\n\n${details}`);
   }
 }
 
@@ -113,17 +134,15 @@ async function sendMessage() {
     const context = await DB.getRecentMessages(10);
     await DB.saveMessage('user', text);
 
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...context,
-      { role: 'user', content: text },
-    ];
-
     const chunks = await engine.chat.completions.create({
-      messages,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...context,
+        { role: 'user', content: text },
+      ],
       stream: true,
       temperature: 0.7,
-      max_tokens: 512,
+      max_tokens: 384,
     });
 
     for await (const chunk of chunks) {
@@ -134,10 +153,12 @@ async function sendMessage() {
     }
 
     await DB.saveMessage('assistant', assistantText);
+    setStatus('Online e funcionando localmente', 'ready');
   } catch (error) {
-    console.error(error);
-    assistantMessage.textContent = `Erro ao gerar resposta: ${error.message}`;
-    setStatus(`Erro: ${error.message}`, 'error');
+    const details = describeError(error);
+    console.error('Falha ao gerar resposta:', error);
+    assistantMessage.textContent = `Erro ao gerar resposta: ${details}`;
+    setStatus(`Erro: ${details}`, 'error');
   } finally {
     isGenerating = false;
     setReady(true);
