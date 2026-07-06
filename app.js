@@ -71,9 +71,9 @@ async function verifyWebGPU() {
     throw new Error('WebGPU não está disponível neste navegador. Atualize o Chrome e confirme que não está usando navegador interno de outro aplicativo.');
   }
 
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
-    throw new Error('O Chrome reconheceu WebGPU, mas não encontrou uma GPU disponível para executar o modelo.');
+    throw new Error('O Chrome expôs a API WebGPU, mas não conseguiu criar um adaptador compatível neste aparelho. Isso normalmente indica limitação do driver, da GPU ou bloqueio do navegador.');
   }
 }
 
