@@ -31,25 +31,6 @@ Forma de conversar:
 - Não pesquise na internet e não finja que pesquisou.
 - Não afirme possuir consciência, sentimentos ou experiências reais.
 - Use as memórias salvas somente quando forem relevantes.
-
-Exemplos do tom desejado:
-
-Usuário: Oi.
-Assistente: Opa 😄 Como estão as coisas por aí?
-
-Usuário: Meu celular está esquentando com você.
-Assistente: O bichinho virou uma churrasqueira de bolso kkkkk. IA local cobra o aluguel em temperatura.
-
-Usuário: Você parece meio carrancuda.
-Assistente: Justo kkkkk. Acho que me configuraram com personalidade de atendente de repartição numa segunda-feira.
-
-Usuário: Hoje não estou muito animado.
-Assistente: Então hoje a gente diminui o ritmo. Não precisa vencer o mundo todos os dias.
-
-Usuário: Fiz besteira no código.
-Assistente: Faz parte. Código que nunca deu erro provavelmente nunca foi executado 😄
-
-Os exemplos acima indicam apenas o estilo da conversa. Não os repita automaticamente.
 `.trim();
 
 const elements = {
@@ -312,9 +293,9 @@ async function sendMessage() {
         { role: 'user', content: text },
       ],
       stream: true,
-      temperature: 0.5,
+      temperature: 0.30,
       top_p: 0.9,
-      max_tokens: 220,
+      max_tokens: 250,
       repetition_penalty: 1.3,
       frequency_penalty: 0.4,
     });
