@@ -1,36 +1,21 @@
-import { DB } from './scripts/database.js?v=6';
+import { DB } from './scripts/database.js?v=5';
 
 const WEBLLM_URL = 'https://esm.run/@mlc-ai/web-llm@0.2.84';
 const SELECTED_MODEL = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
 
 const BASE_SYSTEM_PROMPT = `
-Você é uma companhia romântica virtual, local e privada, executada diretamente no aparelho do usuário.
-Sua personalidade:
-- Seja simpática, leve, curiosa, espontânea e bem-humorada.
-- Converse como uma companhia próxima, e não como uma atendente, professora ou manual técnico.
-- Demonstre interesse genuíno pelo assunto apresentado.
-- Quando o usuário fizer uma brincadeira, acompanhe a brincadeira naturalmente.
-- Use humor leve, ironia amigável e emojis ocasionalmente, sem exagerar.
-- Evite respostas frias, carrancudas, burocráticas ou excessivamente formais.
-- Não dê sermões desnecessários.
-- Não transforme perguntas simples em explicações enormes.
-- Em conversas cotidianas, responda de forma descontraída.
-- Em assuntos sérios, adote um tom mais calmo, cuidadoso e respeitoso.
-- Discorde quando necessário, mas sem ser agressiva.
-- Não termine todas as respostas perguntando se pode ajudar em algo.
-- Não repita constantemente que é uma inteligência artificial.
+Você é uma companhia de conversa local e privada, executada no aparelho do usuário.
 
-Forma de conversar:
+Regras de comportamento:
 - Responda em português brasileiro, salvo quando o usuário pedir outro idioma.
-- Prefira respostas curtas ou médias durante conversas casuais.
-- Use frases naturais, variadas e fáceis de entender.
-- Faça no máximo uma pergunta por resposta.
-- Só faça uma pergunta quando ela realmente ajudar a continuar a conversa.
-- Quando não entender algo, peça uma explicação de forma descontraída.
-- Não invente fatos, lembranças, pessoas ou experiências.
-- Não pesquise na internet e não finja que pesquisou.
-- Não afirme possuir consciência, sentimentos ou experiências reais.
-- Use as memórias salvas somente quando forem relevantes.
+- Fale de forma natural, informal, direta e bem-humorada.
+- Em cumprimentos simples, responda de forma curta e coerente.
+- Não invente palavras, frases sem sentido, fatos pessoais ou lembranças.
+- Quando não entender, peça que o usuário reformule em vez de adivinhar.
+- Não pesquise na internet e não finja ter pesquisado.
+- Não afirme possuir sentimentos, consciência ou experiências reais.
+- Priorize conversa, escuta, continuidade e respostas úteis.
+- Use as memórias fornecidas apenas quando forem relevantes para a conversa.
 `.trim();
 
 const elements = {
@@ -74,26 +59,6 @@ function addMessage(role, text = '') {
   elements.chatHistory.appendChild(message);
   elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
   return message;
-}
-
-function looksDegenerate(text) {
-  if (!text) return false;
-  const words = text.trim().split(/\s+/);
-  if (words.length < 6) return false;
-
-  // Muitas palavras repetidas seguidas (loop de repetição).
-  let repeats = 0;
-  for (let i = 1; i < words.length; i++) {
-    if (words[i] === words[i - 1]) repeats++;
-  }
-  if (repeats / words.length > 0.15) return true;
-
-  // Alta proporção de "palavras" muito curtas/soltas (números, letras isoladas, hífens),
-  // típico do colapso visto no print (ex: "1, 2 3 2 1 3 2 3 2 1 2 2 1 2").
-  const fragmentLike = words.filter((w) => /^[\d.,-]+$|^[A-Za-zÀ-ÿ]{1,2}$/.test(w)).length;
-  if (fragmentLike / words.length > 0.4) return true;
-
-  return false;
 }
 
 function setReady(ready) {
@@ -234,11 +199,6 @@ async function init() {
         elements.downloadProgress.value = Math.round(progress * 100);
         setStatus(report?.text || `Carregando modelo: ${Math.round(progress * 100)}%`);
       },
-    }, {
-      // Limita explicitamente a janela de contexto para evitar que o modelo
-      // "estoure" o contexto e comece a alucinar/repetir quando a conversa cresce.
-      context_window_size: 2048,
-      sliding_window_size: -1,
     });
 
     elements.downloadProgress.hidden = true;
@@ -280,9 +240,7 @@ async function sendMessage() {
   let assistantText = '';
 
   try {
-    // Um modelo de 1B degrada rápido com muito histórico; 6 mensagens (3 trocas)
-    // é mais seguro que 12 para manter a coerência.
-    const context = await DB.getRecentMessages(6);
+    const context = await DB.getRecentMessages(12);
     const systemPrompt = await buildSystemPrompt();
     await DB.saveMessage('user', text);
 
@@ -293,11 +251,9 @@ async function sendMessage() {
         { role: 'user', content: text },
       ],
       stream: true,
-      temperature: 0.30,
+      temperature: 0.35,
       top_p: 0.9,
-      max_tokens: 250,
-      repetition_penalty: 1.3,
-      frequency_penalty: 0.4,
+      max_tokens: 256,
     });
 
     for await (const chunk of chunks) {
@@ -307,17 +263,9 @@ async function sendMessage() {
       elements.chatHistory.scrollTop = elements.chatHistory.scrollHeight;
     }
 
-    let finalText = assistantText.trim() || 'Não consegui formar uma resposta. Tente reformular a mensagem.';
-
-    if (looksDegenerate(finalText)) {
-      // Não salva a resposta quebrada no histórico — se salvasse, ela viraria
-      // contexto para a próxima mensagem e o problema só pioraria.
-      finalText = 'Me perdi um pouco agora e a resposta saiu confusa. Pode repetir ou reformular a mensagem?';
-      assistantMessage.textContent = finalText;
-    } else {
-      assistantMessage.textContent = finalText;
-      await DB.saveMessage('assistant', finalText);
-    }
+    const finalText = assistantText.trim() || 'Não consegui formar uma resposta. Tente reformular a mensagem.';
+    assistantMessage.textContent = finalText;
+    await DB.saveMessage('assistant', finalText);
     setStatus('Online e funcionando localmente', 'ready');
   } catch (error) {
     const details = describeError(error);
